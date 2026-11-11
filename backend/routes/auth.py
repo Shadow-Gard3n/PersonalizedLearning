@@ -1,9 +1,6 @@
-
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, status
-from fastapi.security import OAuth2PasswordRequestForm
-from fastapi import Depends
+from fastapi import APIRouter, HTTPException, status, Depends
 from dependencies import get_current_user
 
 from database import users_collection

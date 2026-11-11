@@ -8,3 +8,7 @@ python-jose[cryptography]
 pwdlib[argon2]
 python-multipart
 torch
+google-genai
+python-dotenv
+Pillow
+httpx
