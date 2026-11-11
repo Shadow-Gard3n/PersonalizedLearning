@@ -1,175 +1,239 @@
-
-import { useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
-import api from "../api/client";
-
+import React, { useState } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import ReactMarkdown from 'react-markdown';
+import api from '../api/client';
 
 export default function LearningSession() {
-  const { sessionId } = useParams();
+  const { id: sessionId } = useParams();
   const navigate = useNavigate();
 
-  const [session, setSession] = useState(null);
-  const [questions, setQuestions] = useState([]);
-  const [index, setIndex] = useState(0);
-  const [selected, setSelected] = useState("");
-  const [feedback, setFeedback] = useState(null);
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true);
+  // State Management
+  const [loading, setLoading] = useState(false);
+  const [syllabus, setSyllabus] = useState(null);
+  const [content, setContent] = useState(null);
+  
+  // Chat & Doubt State
+  const [doubtInput, setDoubtInput] = useState('');
+  const [chatHistory, setChatHistory] = useState([]);
+  
+  // Quiz State
+  const [questionsReady, setQuestionsReady] = useState(false);
+  const [evaluation, setEvaluation] = useState(null);
+  const [image, setImage] = useState(null);
+  const [isFinished, setIsFinished] = useState(false);
 
-  async function loadSession() {
+  // STEP 1: Generate Roadmap & First Topic
+  const startSession = async () => {
+    setLoading(true);
     try {
-      const [sessionResponse, questionsResponse] = await Promise.all([
-        api.get(`/sessions/${sessionId}`),
-        api.get(`/learning/${sessionId}/questions`),
-      ]);
-
-      setSession(sessionResponse.data);
-      setQuestions(questionsResponse.data);
+      const planRes = await api.post(`/learning/${sessionId}/plan`);
+      setSyllabus(planRes.data);
+      await fetchCurrentContent();
     } catch (err) {
-      if (err.response?.status === 401) {
-        localStorage.removeItem("access_token");
-        navigate("/login");
-      } else {
-        setError(err.response?.data?.detail || "Could not load session");
-      }
+      console.error('Failed to generate roadmap:', err);
     } finally {
       setLoading(false);
     }
-  }
+  };
 
-  useEffect(() => {
-    loadSession();
-  }, [sessionId]);
+  const fetchCurrentContent = async () => {
+    try {
+      const res = await api.post(`/learning/${sessionId}/content`);
+      if (res.data.completed) {
+        setIsFinished(true);
+      } else {
+        setContent(res.data);
+        setQuestionsReady(false);
+        setEvaluation(null);
+        setImage(null);
+      }
+    } catch (err) {
+      console.error('Failed to fetch content:', err);
+    }
+  };
 
-  async function submitAnswer(event) {
-    event.preventDefault();
-    if (selected === "") return;
+  // STEP 2: Ask a Doubt
+  const handleAskDoubt = async (e) => {
+    e.preventDefault();
+    if (!doubtInput.trim()) return;
 
-    const question = questions[index];
+    const newChat = [...chatHistory, { role: 'user', content: doubtInput }];
+    setChatHistory(newChat);
+    setDoubtInput('');
 
     try {
-      const response = await api.post(
-        `/learning/${sessionId}/answer`,
-        {
-          question_id: question.id,
-          selected_option: Number(selected),
-        }
-      );
-
-      setFeedback(response.data);
+      const res = await api.post(`/learning/${sessionId}/doubt`, {
+        question: doubtInput,
+        subtopic_title: content.subtopic_title,
+        current_material: content.material,
+        chat_history: chatHistory
+      });
+      setChatHistory([...newChat, { role: 'model', content: res.data.answer }]);
     } catch (err) {
-      setError(err.response?.data?.detail || "Could not submit answer");
+      console.error('Failed to resolve doubt:', err);
     }
+  };
+
+  // STEP 3: Generate Quiz
+  const handleGenerateQuiz = async () => {
+    setLoading(true);
+    try {
+      await api.post(`/learning/${sessionId}/generate-questions`);
+      setQuestionsReady(true);
+    } catch (err) {
+      console.error('Failed to generate quiz:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // STEP 4: Submit Notebook Image
+  const handleImageUpload = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    
+    const formData = new FormData();
+    formData.append('file', image);
+
+    try {
+      const res = await api.post(`/learning/${sessionId}/evaluate-upload`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      setEvaluation(res.data);
+    } catch (err) {
+      console.error('Failed to evaluate upload:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // STEP 5: Advance to Next Topic
+  const handleNextTopic = async () => {
+    setLoading(true);
+    try {
+      await api.post(`/learning/${sessionId}/next`);
+      await fetchCurrentContent();
+      setChatHistory([]);
+    } catch (err) {
+      console.error('Failed to advance topic:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (isFinished) {
+    return (
+      <div className="text-center mt-20">
+        <h1 className="text-3xl font-bold text-green-600">Session Complete! 🎉</h1>
+        <p className="mt-4">You have successfully mastered this topic.</p>
+        <button onClick={() => navigate('/dashboard')} className="mt-6 bg-blue-600 text-white px-6 py-2 rounded">
+          Back to Dashboard
+        </button>
+      </div>
+    );
   }
-
-  function nextQuestion() {
-    setIndex((current) => current + 1);
-    setSelected("");
-    setFeedback(null);
-    setError("");
-  }
-
-  if (loading) return <main className="dashboard">Loading session...</main>;
-
-  if (error && !session) {
-    return <main className="dashboard"><p className="error">{error}</p></main>;
-  }
-
-  if (!session) return null;
-
-  const question = questions[index];
-  const finished = questions.length > 0 && index >= questions.length;
 
   return (
-    <main className="dashboard">
-      <header className="topbar">
-        <Link to="/" className="brand">LearnWise</Link>
-        <Link to="/" className="text-link">Dashboard</Link>
-      </header>
-
-      <section className="welcome">
-        <p className="eyebrow">LEARNING SESSION</p>
-        <h1>{session.topic}</h1>
-        <p>{session.learning_goal || "Learn and practice at your own pace."}</p>
-      </section>
-
-      {questions.length === 0 ? (
-        <section className="panel">
-          <h2>Your session is ready</h2>
-          <p>No questions have been added to this session yet.</p>
-          <p className="muted">
-            You can add a question through the backend API documentation.
-            AI-generated lessons and questions will be added in a later phase.
-          </p>
-          <a
-            className="button-link"
-            href={`${import.meta.env.VITE_API_URL}/docs`}
-            target="_blank"
-            rel="noreferrer"
-          >
-            Open API documentation
-          </a>
-        </section>
-      ) : finished ? (
-        <section className="panel">
-          <h2>Practice completed!</h2>
-          <p>You have reached the end of the questions in this session.</p>
-          <Link className="button-link" to="/">Return to dashboard</Link>
-        </section>
-      ) : (
-        <section className="panel">
-          <div className="question-meta">
-            <span>Question {index + 1} of {questions.length}</span>
-            <span>{question.difficulty}</span>
+    <div className="max-w-5xl mx-auto p-4 flex gap-6">
+      
+      {/* LEFT PANEL: Progress & Actions */}
+      <div className="w-1/3 bg-gray-50 p-4 border rounded-lg h-fit sticky top-4">
+        {!content ? (
+          <div className="text-center">
+            <h2 className="text-xl font-bold mb-4">Ready to Learn?</h2>
+            <button 
+              onClick={startSession} 
+              disabled={loading}
+              className="bg-blue-600 text-white px-4 py-2 rounded w-full disabled:opacity-50"
+            >
+              {loading ? 'Generating Syllabus...' : 'Generate Syllabus & Start'}
+            </button>
           </div>
-
-          <p className="eyebrow">{question.concept}</p>
-          <h2>{question.prompt}</h2>
-
-          <form onSubmit={submitAnswer}>
-            <div className="option-list">
-              {question.options.map((option, optionIndex) => (
-                <label
-                  key={optionIndex}
-                  className={`option ${
-                    selected === String(optionIndex) ? "selected" : ""
-                  }`}
+        ) : (
+          <div>
+            <h2 className="text-xl font-bold mb-2">Current Topic:</h2>
+            <p className="text-blue-700 font-semibold text-lg mb-6">{content.subtopic_title}</p>
+            
+            <div className="space-y-4">
+              {!questionsReady ? (
+                <button 
+                  onClick={handleGenerateQuiz} 
+                  disabled={loading}
+                  className="bg-purple-600 text-white px-4 py-2 rounded w-full disabled:opacity-50"
                 >
-                  <input
-                    type="radio"
-                    name="answer"
-                    value={optionIndex}
-                    checked={selected === String(optionIndex)}
-                    disabled={!!feedback}
-                    onChange={(e) => setSelected(e.target.value)}
+                  {loading ? 'Preparing Quiz...' : 'I am ready for the Quiz'}
+                </button>
+              ) : !evaluation ? (
+                <form onSubmit={handleImageUpload} className="bg-white p-3 border rounded shadow-sm">
+                  <p className="text-sm font-bold mb-2">Upload Notebook Answer</p>
+                  <input 
+                    type="file" 
+                    accept="image/*" 
+                    onChange={(e) => setImage(e.target.files[0])} 
+                    className="mb-2 text-sm w-full"
+                    required
                   />
-                  <span>{option}</span>
-                </label>
-              ))}
+                  <button type="submit" disabled={loading} className="bg-green-600 text-white px-4 py-2 rounded w-full text-sm">
+                    {loading ? 'Grading...' : 'Submit for Grading'}
+                  </button>
+                </form>
+              ) : (
+                <div className="bg-green-50 p-4 border border-green-200 rounded">
+                  <h3 className="font-bold text-green-800">Score: {evaluation.score}%</h3>
+                  <p className="text-sm mt-2">{evaluation.feedback}</p>
+                  {evaluation.weak_topics.length > 0 && (
+                    <p className="text-xs text-red-600 mt-2">Needs review: {evaluation.weak_topics.join(', ')}</p>
+                  )}
+                  <button 
+                    onClick={handleNextTopic} 
+                    className="mt-4 bg-blue-600 text-white px-4 py-2 rounded w-full"
+                  >
+                    Move to Next Topic &rarr;
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* RIGHT PANEL: Content & Tutor Chat */}
+      <div className="w-2/3">
+        {content && (
+          <div className="space-y-8">
+            {/* Study Material */}
+            <div className="bg-white p-8 border rounded-lg shadow-sm prose max-w-none">
+              <ReactMarkdown>{content.material}</ReactMarkdown>
             </div>
 
-            {error && <p className="error">{error}</p>}
-
-            {!feedback ? (
-              <button disabled={selected === ""}>Submit answer</button>
-            ) : (
-              <div className="feedback">
-                <h3>{feedback.correct ? "Correct!" : "Not quite."}</h3>
-                <p>
-                  Correct answer: {question.options[feedback.correct_option]}
-                </p>
-                {feedback.explanation && <p>{feedback.explanation}</p>}
-
-                <button type="button" onClick={nextQuestion}>
-                  {index + 1 === questions.length
-                    ? "Finish session"
-                    : "Next question"}
-                </button>
+            {/* Interactive Tutor Chat */}
+            {!questionsReady && (
+              <div className="bg-white border rounded-lg overflow-hidden shadow-sm">
+                <div className="bg-blue-600 text-white p-3 font-bold">Ask the AI Tutor</div>
+                <div className="h-64 overflow-y-auto p-4 space-y-4 bg-gray-50">
+                  {chatHistory.length === 0 && <p className="text-gray-400 text-sm">Have a doubt about this topic? Ask below!</p>}
+                  {chatHistory.map((msg, i) => (
+                    <div key={i} className={`p-3 rounded-lg max-w-[80%] ${msg.role === 'user' ? 'bg-blue-100 ml-auto' : 'bg-gray-200 mr-auto'}`}>
+                      <ReactMarkdown className="text-sm">{msg.content}</ReactMarkdown>
+                    </div>
+                  ))}
+                </div>
+                <form onSubmit={handleAskDoubt} className="p-3 bg-white border-t flex gap-2">
+                  <input 
+                    type="text" 
+                    value={doubtInput}
+                    onChange={(e) => setDoubtInput(e.target.value)}
+                    placeholder="E.g., I don't understand the second paragraph..."
+                    className="flex-1 p-2 border rounded focus:outline-blue-500"
+                  />
+                  <button type="submit" className="bg-blue-600 text-white px-4 py-2 rounded">Ask</button>
+                </form>
               </div>
             )}
-          </form>
-        </section>
-      )}
-    </main>
+          </div>
+        )}
+      </div>
+
+    </div>
   );
 }
